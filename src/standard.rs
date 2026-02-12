@@ -956,9 +956,10 @@ impl Redfish for RedfishStandard {
     }
 
     async fn disable_psu_hot_spare(&self) -> Result<(), RedfishError> {
-        // No-op for non-Dell vendors
         // PSU Hot Spare is Dell-specific; other vendors handle PSU redundancy differently
-        Ok(())
+        Err(RedfishError::NotSupported(
+            "disable_psu_hot_spare".to_string(),
+        ))
     }
 }
 

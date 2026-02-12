@@ -565,11 +565,12 @@ pub trait Redfish: Send + Sync + 'static {
     /// Specifically sets Dell iDRAC attribute: `ServerPwr.1.PSRapidOn = "Disabled"`
     ///
     /// # Returns
-    /// - `Ok(())` if successfully disabled or not applicable to this vendor
+    /// - `Ok(())` if successfully disabled (Dell only)
+    /// - `Err(RedfishError::NotSupported)` for non-Dell vendors
     /// - `Err(RedfishError)` if the PATCH operation fails
     ///
     /// # Note
-    /// Only applicable to Dell servers. Other vendors return `Ok(())` as no-op.
+    /// Only applicable to Dell servers. Other vendors return `NotSupported`.
     async fn disable_psu_hot_spare(&self) -> Result<(), RedfishError>;
 }
 
