@@ -297,12 +297,12 @@ impl Redfish for Bmc {
             RedfishVendor,
             HashMap<String, HashMap<BiosProfileType, HashMap<String, serde_json::Value>>>,
         >,
-    ) -> Result<(), RedfishError> {
+    ) -> Result<Option<String>, RedfishError> {
         self.setup_serial_console().await?;
         self.clear_tpm().await?;
         let attrs = self.machine_setup_attrs();
         self.set_bios(attrs).await?;
-        Ok(())
+        Ok(None)
     }
 
     /// Check machine setup status for AMI BMC.

@@ -228,8 +228,8 @@ impl Redfish for Bmc {
             RedfishVendor,
             HashMap<String, HashMap<BiosProfileType, HashMap<String, serde_json::Value>>>,
         >,
-    ) -> Result<(), RedfishError> {
-        Ok(())
+    ) -> Result<Option<String>, RedfishError> {
+        Ok(None)
     }
 
     async fn machine_setup_status(

@@ -192,9 +192,9 @@ impl Redfish for Bmc {
             RedfishVendor,
             HashMap<String, HashMap<BiosProfileType, HashMap<String, serde_json::Value>>>,
         >,
-    ) -> Result<(), RedfishError> {
+    ) -> Result<Option<String>, RedfishError> {
         // we don't do any changes for powershelves
-        Ok(())
+        Ok(None)
     }
 
     async fn machine_setup_status(

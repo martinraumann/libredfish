@@ -472,7 +472,7 @@ impl Redfish for Bmc {
             RedfishVendor,
             HashMap<String, HashMap<BiosProfileType, HashMap<String, serde_json::Value>>>,
         >,
-    ) -> Result<(), RedfishError> {
+    ) -> Result<Option<String>, RedfishError> {
         self.disable_secure_boot().await?;
 
         let bios_attrs = self.machine_setup_attrs().await?;
@@ -480,7 +480,11 @@ impl Redfish for Bmc {
         attrs.extend(bios_attrs);
         let body = HashMap::from([("Attributes", attrs)]);
         let url = format!("Systems/{}/Bios/Settings", self.s.system_id());
-        self.s.client.patch(&url, body).await.map(|_status_code| ())
+        self.s
+            .client
+            .patch(&url, body)
+            .await
+            .map(|_status_code| None)
     }
 
     async fn machine_setup_status(

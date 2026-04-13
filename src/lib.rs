@@ -207,13 +207,15 @@ pub trait Redfish: Send + Sync + 'static {
     /// bios_profiles: Map of vendor/model (with spaces replaced by underscores)/profile/type
     ///   to extra settings; expected to come from config rather than hardcoded.
     /// selected_profile: Profile to use (if present)
+    /// Returns Ok(Some(job_id)) when the vendor creates a job for the BIOS PATCH (e.g. Dell);
+    /// Ok(None) when no job is created. Caller should wait for job completion before configuring boot order.
     async fn machine_setup(
         &self,
         boot_interface_mac: Option<&str>,
         bios_profiles: &BiosProfileVendor,
         selected_profile: BiosProfileType,
         oem_manager_profiles: &BiosProfileVendor,
-    ) -> Result<(), RedfishError>;
+    ) -> Result<Option<String>, RedfishError>;
 
     /// Is everything that machine_setup does already done?
     async fn machine_setup_status(

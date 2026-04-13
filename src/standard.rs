@@ -269,7 +269,7 @@ impl Redfish for RedfishStandard {
             RedfishVendor,
             HashMap<String, HashMap<BiosProfileType, HashMap<String, serde_json::Value>>>,
         >,
-    ) -> Result<(), RedfishError> {
+    ) -> Result<Option<String>, RedfishError> {
         Err(RedfishError::NotSupported("machine_setup".to_string()))
     }
 

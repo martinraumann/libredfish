@@ -243,7 +243,7 @@ impl Redfish for Bmc {
             RedfishVendor,
             HashMap<String, HashMap<BiosProfileType, HashMap<String, serde_json::Value>>>,
         >,
-    ) -> Result<(), RedfishError> {
+    ) -> Result<Option<String>, RedfishError> {
         self.delete_job_queue().await?;
 
         let apply_time = dell::SetSettingsApplyTime {
@@ -291,10 +291,17 @@ impl Redfish for Bmc {
         }
 
         let url = format!("Systems/{}/Bios/Settings/", self.s.system_id());
-        match self.s.client.patch(&url, set_machine_attrs).await? {
-            (_, Some(headers)) => self.parse_job_id_from_response_headers(&url, headers).await,
-            (_, None) => Err(RedfishError::NoHeader),
-        }?;
+        let bios_job_id = match self.s.client.patch(&url, set_machine_attrs).await? {
+            (_, Some(headers)) => {
+                let jid = self
+                    .parse_job_id_from_response_headers(&url, headers)
+                    .await?;
+                Some(jid)
+            }
+            (_, None) => {
+                return Err(RedfishError::NoHeader);
+            }
+        };
 
         let oem_attrs = if let Some(dell) = oem_manager_profiles.get(&RedfishVendor::Dell) {
             let model = crate::model_coerce(
@@ -315,9 +322,8 @@ impl Redfish for Bmc {
         self.setup_bmc_remote_access().await?;
 
         if has_dpu {
-            Ok(())
+            Ok(bios_job_id)
         } else {
-            // Usually a missing DPU is an error, but for zero-dpu it isn't
             // Tell the caller and let them decide
             Err(RedfishError::NoDpu)
         }
@@ -1953,7 +1959,7 @@ impl Bmc {
         resp_headers: HeaderMap,
     ) -> Result<String, RedfishError> {
         let key = "location";
-        Ok(resp_headers
+        let jid = resp_headers
             .get(key)
             .ok_or_else(|| RedfishError::MissingKey {
                 key: key.to_string(),
@@ -1972,7 +1978,8 @@ impl Bmc {
                 field: key.to_string(),
                 err: InvalidValueError("unable to parse job_id from location string".to_string()),
             })?
-            .to_string())
+            .to_string();
+        Ok(jid)
     }
 
     /// import_system_configuration returns the job ID for importing this sytem configuration
