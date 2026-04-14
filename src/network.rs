@@ -514,7 +514,7 @@ impl RedfishHttpClient {
             "TX {} {} {}",
             method,
             url,
-            redact_sensitive_fields(body_enc.as_deref().unwrap_or_default())
+            RedactPasswords(body_enc.as_deref().unwrap_or_default())
         );
         let mut req_b = match *method {
             Method::GET => self.http_client.get(&url),
@@ -770,6 +770,19 @@ fn truncate(s: &str, len: usize) -> &str {
 ///   `Password`, `OldPassword`, `NewPassword`   — standard Redfish account/BIOS ops
 ///   `CurrentUefiPassword`, `UefiPassword`       — NVIDIA DPU Bios/Settings PATCH
 ///   `ImportBuffer`                              — Dell ImportSystemConfiguration XML blob
+
+/// A `Display` wrapper that redacts sensitive JSON fields on formatting.
+///
+/// Passing this to `tracing::debug!` defers evaluation until the macro decides the
+/// message will actually be emitted, so the regex never runs at non-debug log levels.
+struct RedactPasswords<'a>(&'a str);
+
+impl std::fmt::Display for RedactPasswords<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        redact_sensitive_fields(self.0).fmt(f)
+    }
+}
+
 fn redact_sensitive_fields(body: &str) -> Cow<'_, str> {
     // Fast path: skip regex engine entirely when no sensitive key is present.
     // "Password" covers all five password-style keys; "ImportBuffer" covers the
