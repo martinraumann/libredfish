@@ -71,6 +71,7 @@ pub enum RedfishVendor {
     NvidiaGBSwitch, // GB NVLink switch
     P3809, // dummy for P3809, needs to be set to NvidiaGH200 or NvidiaGBSwitch based on chassis
     LiteOnPowerShelf,
+    DeltaPowerShelf,
     Unknown,
 }
 
@@ -112,6 +113,7 @@ impl ServiceRoot {
             "wiwynn" => RedfishVendor::NvidiaGBx00,
             "supermicro" => RedfishVendor::Supermicro,
             "lite-on technology corp." => RedfishVendor::LiteOnPowerShelf,
+            "delta" => RedfishVendor::DeltaPowerShelf,
             _ => RedfishVendor::Unknown,
         })
     }

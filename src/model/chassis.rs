@@ -25,9 +25,14 @@ use serde_json::Value;
 use tracing::debug;
 
 use super::oem::ChassisExtensions;
+use super::power::{Power, PowerSubsystem, Voltages};
 use super::resource::OData;
+use super::sensor::{Sensor, Sensors};
+use super::thermal::{Thermal, ThermalSubsystem};
 use super::{ODataId, ODataLinks, PCIeFunction, PowerState, ResourceStatus};
+use crate::network::{RedfishHttpClient, REDFISH_ENDPOINT};
 use crate::NetworkDeviceFunction;
+use crate::RedfishError;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ChassisActions {
@@ -126,6 +131,90 @@ pub struct Chassis {
     pub thermal_subsystem: Option<ODataId>,
     pub trusted_components: Option<ODataId>,
     pub oem: Option<ChassisExtensions>,
+}
+
+impl Chassis {
+    /// Assemble power metrics (PSUs + voltage sensors) by following this
+    /// chassis's own `PowerSubsystem` and `Sensors` links.
+    ///
+    /// Power shelves (e.g. Lite-On, Delta) expose PSUs via the
+    /// `PowerSubsystem` resource and voltage readings under `Sensors`, rather
+    /// than the legacy `Chassis/<id>/Power` resource. The PSU collection is
+    /// gathered by `PowerSubsystem`; this method just resolves the subsystem
+    /// link and combines it with the chassis's voltage sensors.
+    ///
+    /// Returns empty collections (not an error) when the chassis advertises no
+    /// `PowerSubsystem`/`Sensors` links.
+    pub(crate) async fn get_power_metrics(
+        &self,
+        client: &RedfishHttpClient,
+    ) -> Result<Power, RedfishError> {
+        // Resource links are absolute (`/redfish/v1/...`); the HTTP client
+        // expects paths relative to the service root, so strip the prefix.
+        let to_relative = |odata_id: &str| odata_id.replace(&format!("/{REDFISH_ENDPOINT}/"), "");
+
+        let power_supplies = match &self.power_subsystem {
+            Some(link) => {
+                let url = to_relative(&link.odata_id);
+                let (_, subsystem): (_, PowerSubsystem) = client.get(&url).await?;
+                subsystem.power_supplies(client).await?
+            }
+            None => Vec::new(),
+        };
+
+        let mut voltages = Vec::new();
+        if let Some(sensors_link) = &self.sensors {
+            let url = to_relative(&sensors_link.odata_id);
+            let (_, sensors): (_, Sensors) = client.get(&url).await?;
+            for sensor in sensors.members {
+                // only voltage sensors
+                if !sensor.odata_id.to_lowercase().contains("voltage") {
+                    continue;
+                }
+                let url = to_relative(&sensor.odata_id);
+                let (_, reading): (_, Sensor) = client.get(&url).await?;
+                voltages.push(Voltages::from(reading));
+            }
+        }
+
+        Ok(Power {
+            odata: None,
+            id: "Power".to_string(),
+            name: "Power".to_string(),
+            power_control: vec![],
+            power_supplies: Some(power_supplies),
+            voltages: Some(voltages),
+            redundancy: None,
+        })
+    }
+
+    /// Assemble thermal metrics by following this chassis's `ThermalSubsystem`
+    /// link. The `ThermalSubsystem`/`ThermalMetrics` resources are the newer
+    /// Redfish replacement for the legacy `Chassis/<id>/Thermal` resource;
+    /// the per-reading parsing lives on `ThermalSubsystem`.
+    ///
+    /// Returns empty temperatures (not an error) when the chassis advertises no
+    /// `ThermalSubsystem` link.
+    pub(crate) async fn get_thermal_metrics(
+        &self,
+        client: &RedfishHttpClient,
+    ) -> Result<Thermal, RedfishError> {
+        let temperatures = match &self.thermal_subsystem {
+            Some(link) => {
+                let url = link.odata_id.replace(&format!("/{REDFISH_ENDPOINT}/"), "");
+                let (_, subsystem): (_, ThermalSubsystem) = client.get(&url).await?;
+                subsystem.temperatures(client).await?
+            }
+            None => Vec::new(),
+        };
+
+        Ok(Thermal {
+            id: "ThermalMetrics".to_string(),
+            name: "Chassis Thermal Metrics".to_string(),
+            temperatures,
+            ..Default::default()
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

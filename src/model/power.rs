@@ -22,6 +22,8 @@
 use super::{LinkType, ODataId, ODataLinks, ResourceStatus, StatusVec};
 use crate::model::sensor::Sensor;
 use crate::model::system::PowerState;
+use crate::network::{RedfishHttpClient, REDFISH_ENDPOINT};
+use crate::RedfishError;
 use serde::{Deserialize, Serialize};
 
 /// Deserializes `PowerState` from either a bool (Lite-On: `true`/`false`)
@@ -187,6 +189,73 @@ pub struct PowerSupply {
     pub spare_part_number: Option<String>,
     pub part_number: Option<String>, // Supermicro
     pub status: ResourceStatus,
+    /// OEM extensions. Delta power shelves report the commanded PSU on/off
+    /// state under `Oem.deltaenergysystems.Power`; other vendors omit it.
+    #[serde(default)]
+    pub oem: Option<PowerSupplyOem>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PowerSupplyOem {
+    pub deltaenergysystems: Option<PowerSupplyOemDelta>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "PascalCase")]
+pub struct PowerSupplyOemDelta {
+    pub power: Option<bool>,
+}
+
+impl PowerSupply {
+    /// Delta power shelves expose the commanded PSU on/off state under
+    /// `Oem.deltaenergysystems.Power`. Returns `None` for vendors that
+    /// don't populate it.
+    pub fn is_delta_psu_on(&self) -> Option<bool> {
+        self.oem.as_ref()?.deltaenergysystems.as_ref()?.power
+    }
+}
+
+/// The `PowerEquipment/PowerShelves` collection. Delta power shelves have no
+/// `/Systems` resource, so they expose PSU on/off control as OEM actions on
+/// the individual shelf rather than via `ComputerSystem.Reset`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct PowerShelves {
+    pub members: Vec<ODataId>,
+}
+
+/// A single `PowerEquipment/PowerShelves/<id>`. Only the Delta OEM PSU
+/// on/off action targets are modeled here; voltages/metrics are read via the
+/// chassis `PowerSubsystem` path instead.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "PascalCase")]
+pub struct PowerShelf {
+    #[serde(default)]
+    pub oem: Option<PowerShelfOem>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PowerShelfOem {
+    pub deltaenergysystems: Option<PowerShelfOemDelta>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "PascalCase")]
+pub struct PowerShelfOemDelta {
+    pub actions: Option<PowerShelfDeltaActions>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PowerShelfDeltaActions {
+    #[serde(rename = "#PowerShelf.TurnOnPSUs")]
+    pub turn_on_psus: Option<PowerShelfAction>,
+    #[serde(rename = "#PowerShelf.TurnOffPSUs")]
+    pub turn_off_psus: Option<PowerShelfAction>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct PowerShelfAction {
+    pub target: Option<String>, // URL path of the action
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -248,6 +317,46 @@ pub struct PowerSupplies {
     pub description: Option<String>,
     pub members: Vec<ODataId>,
     pub name: String,
+}
+
+/// The `PowerSubsystem` resource
+/// (`/redfish/v1/Chassis/<id>/PowerSubsystem`) that links to a chassis's
+/// power-supply collection (newer Redfish replacement for the legacy `Power`
+/// resource).
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[serde(rename_all = "PascalCase")]
+pub struct PowerSubsystem {
+    #[serde(flatten)]
+    pub odata: Option<ODataLinks>,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub power_supplies: Option<ODataId>,
+}
+
+impl PowerSubsystem {
+    /// Fetch and expand every member of this subsystem's `PowerSupplies`
+    /// collection. Returns an empty vec when the subsystem advertises no
+    /// `PowerSupplies` link.
+    pub(crate) async fn power_supplies(
+        &self,
+        client: &RedfishHttpClient,
+    ) -> Result<Vec<PowerSupply>, RedfishError> {
+        let Some(link) = &self.power_supplies else {
+            return Ok(Vec::new());
+        };
+        let url = link.odata_id.replace(&format!("/{REDFISH_ENDPOINT}/"), "");
+        let (_, collection): (_, PowerSupplies) = client.get(&url).await?;
+
+        let mut supplies = Vec::with_capacity(collection.members.len());
+        for member in collection.members {
+            let url = member
+                .odata_id
+                .replace(&format!("/{REDFISH_ENDPOINT}/"), "");
+            let (_, supply): (_, PowerSupply) = client.get(&url).await?;
+            supplies.push(supply);
+        }
+        Ok(supplies)
+    }
 }
 
 impl StatusVec for Power {
