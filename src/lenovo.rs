@@ -2004,6 +2004,7 @@ struct UpdateParameters {
     targets: Vec<String>,
     #[serde(rename = "@Redfish.OperationApplyTime")]
     operation_apply_time: String,
+    force_update: bool,
 }
 
 impl UpdateParameters {
@@ -2011,6 +2012,7 @@ impl UpdateParameters {
         Self {
             targets: vec![],
             operation_apply_time: "Immediate".to_string(),
+            force_update: true,
         }
     }
 }
