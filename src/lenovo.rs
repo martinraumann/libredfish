@@ -883,10 +883,19 @@ impl Redfish for Bmc {
         current_uefi_password: &'a str,
         new_uefi_password: &'a str,
     ) -> crate::RedfishFuture<'a, Result<Option<String>, RedfishError>> {
+        let current_pw = current_uefi_password.to_string();
+        let new_pw = new_uefi_password.to_string();
+        let s = self.s.clone();
         Box::pin(async move {
-            self.s
-                .change_bios_password(UEFI_PASSWORD_NAME, current_uefi_password, new_uefi_password)
-                .await
+            // Lenovo BMC requires explicit empty string "" for OldPassword, not null.
+            // This is handled explicitly by building the HashMap with String values
+            // instead of Option<String>, ensuring empty passwords serialize as "" not null.
+            let url = format!("Systems/{}/Bios/Actions/Bios.ChangePassword", s.system_id());
+            let mut arg = HashMap::new();
+            arg.insert("PasswordName", UEFI_PASSWORD_NAME.to_string());
+            arg.insert("OldPassword", current_pw);  // Empty string stays as ""
+            arg.insert("NewPassword", new_pw);
+            s.client.post(&url, arg).await.map(|_resp| Ok(None))?
         })
     }
 
