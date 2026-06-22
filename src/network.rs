@@ -32,6 +32,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use tracing::{debug, Instrument};
 
 use crate::model::service_root::RedfishVendor;
+use crate::model::ComputerSystem;
 use crate::{model::InvalidValueError, standard::RedfishStandard, Redfish, RedfishError};
 
 pub const REDFISH_ENDPOINT: &str = "redfish/v1";
@@ -221,9 +222,19 @@ impl RedfishClientPool {
         // system id and set it before set_vendor (DGX detection depends on it).
         if vendor != RedfishVendor::DeltaPowerShelf {
             let systems = s.get_systems().await?;
-            let system_id = systems.first().ok_or_else(|| RedfishError::GenericError {
-                error: "No systems found in service root".to_string(),
-            })?;
+            // Prefer the canonical host system `System_0` when present. Some
+            // platforms enumerate an auxiliary system (e.g. the NVIDIA
+            // `HGX_Baseboard_0`) ahead of the real host, so picking the first
+            // member blindly targets the wrong system (no BIOS/boot). Falling
+            // back to the first member preserves behavior for every platform
+            // that does not expose `System_0` (e.g. Viking's `DGX`).
+            let system_id = systems
+                .iter()
+                .find(|id| *id == "System_0")
+                .or_else(|| systems.first())
+                .ok_or_else(|| RedfishError::GenericError {
+                    error: "No systems found in service root".to_string(),
+                })?;
             // call set_system_id always before calling set_vendor
             s.set_system_id(system_id)?;
         }
@@ -231,19 +242,56 @@ impl RedfishClientPool {
         s.set_manager_id(manager_id)?;
         s.set_service_root(service_root.clone())?;
 
-        // P3809 is a placeholder — always resolve it based on chassis
-        // contents, whether it was auto-detected or explicitly provided.
-        let vendor = if vendor == RedfishVendor::P3809 {
-            if chassis.contains(&"MGX_NVSwitch_0".to_string()) {
-                RedfishVendor::NvidiaGBSwitch
-            } else {
-                RedfishVendor::NvidiaGH200
+        // Resolve placeholder/ambiguous vendors that can only be settled from
+        // fetched resources:
+        // - P3809 is a placeholder — pick the GBx variant from chassis contents,
+        //   whether it was auto-detected or explicitly provided.
+        // - AMI is shared by Viking/DGX/GB300, distinguished by inspecting the
+        //   host systems (see `refine_ami_vendor`).
+        let vendor = match vendor {
+            RedfishVendor::P3809 => {
+                if chassis.contains(&"MGX_NVSwitch_0".to_string()) {
+                    RedfishVendor::NvidiaGBSwitch
+                } else {
+                    RedfishVendor::NvidiaGH200
+                }
             }
-        } else {
-            vendor
+            RedfishVendor::AMI => Self::refine_ami_vendor(&s).await?,
+            other => other,
         };
 
         s.set_vendor(vendor).await
+    }
+
+    /// Refine a service-root `AMI` vendor to `LenovoGB300` when the host is a
+    /// Lenovo system alongside an NVIDIA GB300 baseboard; other AMI platforms
+    /// (Viking/DGX, plain AMI) stay `AMI`.
+    async fn refine_ami_vendor(s: &RedfishStandard) -> Result<RedfishVendor, RedfishError> {
+        let mut is_lenovo = false;
+        let mut is_gb300 = false;
+        for id in s.get_systems().await? {
+            let (_, system): (_, ComputerSystem) = s.client.get(&format!("Systems/{id}")).await?;
+            if system
+                .manufacturer
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Lenovo")
+            {
+                is_lenovo = true;
+            }
+            if system
+                .model
+                .as_deref()
+                .unwrap_or_default()
+                .contains("GB300")
+            {
+                is_gb300 = true;
+            }
+            if is_lenovo && is_gb300 {
+                return Ok(RedfishVendor::LenovoGB300);
+            }
+        }
+        Ok(RedfishVendor::AMI)
     }
 
     /// Creates a Redfish BMC client for a certain endpoint
