@@ -428,6 +428,14 @@ async fn run_integration_test(
         redfish
             .machine_setup(None, &profiles, BiosProfileType::Performance, &profiles)
             .await?;
+        let status = redfish.machine_setup_status(None).await?;
+        assert!(
+            status
+                .diffs
+                .iter()
+                .all(|diff| !diff.key.starts_with("Re_tryBoot")),
+            "Retry Boot must not prevent Supermicro setup from converging"
+        );
     }
 
     // Exercise vendor-specific BIOS reset dispatch. The mock server validates
